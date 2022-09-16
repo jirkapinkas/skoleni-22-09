@@ -1,0 +1,58 @@
+
+import com.zaxxer.hikari.HikariDataSource;
+import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Profile;
+import org.testcontainers.containers.Container;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.utility.MountableFile;
+
+import javax.sql.DataSource;
+import java.nio.file.Path;
+
+/**
+ * Pri spusteni aplikace se vytvori Docker container
+ * s postgresql a vytvori se v nem tabulky s daty
+ * (kopie toho co je na produkci)
+ */
+@Slf4j
+@Profile("dev")
+@Configuration
+public class DevConfiguration {
+
+    @SneakyThrows
+    private void execInContainer(PostgreSQLContainer postgres, String... args) {
+        Container.ExecResult execResult = postgres.execInContainer(args);
+        if (execResult.getStdout() != null && !execResult.getStdout().isBlank()) {
+            log.info(execResult.getStdout());
+        }
+        if (execResult.getStderr() != null && !execResult.getStderr().isBlank()) {
+            log.error(execResult.getStderr());
+        }
+    }
+
+    @Bean
+    public PostgreSQLContainer postgreSQLContainer() {
+        PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:14")
+                .withDatabaseName("scheduler")
+                .withUsername("postgres");
+        postgres.start();
+        postgres.copyFileToContainer(MountableFile.forHostPath(Path.of("data", "scheduler.sql")), "scheduler.sql");
+        execInContainer(postgres, "/usr/lib/postgresql/9.6/bin/createuser", "-U", "postgres", "scheduler");
+        execInContainer(postgres, "/usr/lib/postgresql/9.6/bin/createuser", "-U", "postgres", "topsqlblogs");
+        execInContainer(postgres, "psql", "-U", "postgres", "-d", "scheduler", "-f", "scheduler.sql");
+        return postgres;
+    }
+
+    @Bean
+    public DataSource dataSource(PostgreSQLContainer postgreSQLContainer) {
+        HikariDataSource dataSource = new HikariDataSource();
+        dataSource.setJdbcUrl(postgreSQLContainer.getJdbcUrl());
+        dataSource.setUsername(postgreSQLContainer.getUsername());
+        dataSource.setPassword(postgreSQLContainer.getPassword());
+        return dataSource;
+    }
+
+}
